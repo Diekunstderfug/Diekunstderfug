@@ -1,8 +1,5 @@
 // ======================================================
 // Clash Verge Rev 2025 — Structured Optimized Script
-// Author: Jensen custom + GPT-5 Engineering Refactor
-// 功能：区域组自动生成 + 策略组优先化 + 稳定远程规则集 + DNS合并增强
-// Core: Mihomo / Verge Rev v1.19+
 // ======================================================
 
 // ------------------------------------------------------
@@ -15,7 +12,7 @@ const CUSTOM_RULES = [
 // 🌍 CDN fallback 列表
 const CDN_BASES = [
     "https://fastly.jsdelivr.net/gh",     // Cloudflare CDN
-    "https://gcore.jsdelivr.net/gh",      // GCore CDN (稳定)
+    "https://gcore.jsdelivr.net/gh",      // GCore CDN 
     "https://cdn.jsdelivr.net/gh",        // 官方 jsDelivr
     "https://mirror.ghproxy.com/gh",      // GHProxy
     "https://ghproxy.net/gh"              // GHProxy备用
