@@ -1,195 +1,651 @@
 // ======================================================
-// Clash Verge Rev 2025 — Structured Optimized Script
+// Clash Verge Rev / Mihomo — Ultimate Rules v5.5
+// ======================================================
+// ↓↓↓ 日常只改这一段，下面的引擎部分不用动 ↓↓↓
 // ======================================================
 
-// ------------------------------------------------------
-// 0️⃣ 全局配置（全部常量提前集中管理）
-// ------------------------------------------------------
-// 最高优先级自定义规则（放在最前面）
+
+// ======================================================
+// User config
+// ======================================================
+
+// ----- VPS 节点名（精确匹配）-----
+const VPS_NODE_NAME = ["US-la-vps-lisa"];
+
+// ----- VPS 专用规则（会插到所有规则最前）-----
+const VPS_RULES = [];
+
+// ----- 自定义规则（Layer 0，优先级最高）-----
 const CUSTOM_RULES = [
-    // "RULE-SET,my-ip-pool,🚀 PROXY"
-];
-// 🌍 CDN fallback 列表
-const CDN_BASES = [
-    "https://fastly.jsdelivr.net/gh",     // Cloudflare CDN
-    "https://gcore.jsdelivr.net/gh",      // GCore CDN 
-    "https://cdn.jsdelivr.net/gh",        // 官方 jsDelivr
-    "https://mirror.ghproxy.com/gh",      // GHProxy
-    "https://ghproxy.net/gh"              // GHProxy备用
+    "DOMAIN-SUFFIX,pku.edu.cn,DIRECT"
 ];
 
-// CDN 拼接函数
-function cdn(path) {
-    for (const base of CDN_BASES) return `${base}/${path}`;
+// ----- 自定义 provider（同名会覆盖内置 provider）-----
+const CUSTOM_RULE_PROVIDERS = {};
+
+// ----- Rule-set 下载源 -----
+const META = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo";
+const APPLICATIONS = "https://fastly.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/applications.txt";
+
+// ----- provider 下载出口：字符串 "🚀 PROXY" / "🎯 DIRECT" / null(直连) -----
+const RULE_DOWNLOAD_PROXY = "🚀 PROXY";   // = GROUP.PROXY
+
+// ----- DNS -----
+const DNS_BOOTSTRAP = ["223.5.5.5", "119.29.29.29"];
+const DNS_DOH = ["https://dns.alidns.com/dns-query", "https://doh.pub/dns-query"];
+
+// ----- 健康检查 -----
+const TEST_URL = "https://www.gstatic.com/generate_204";
+const TEST_INTERVAL = 300;
+
+// ----- 机场信息节点过滤 -----
+const NODE_EXCLUDE = String.raw`(?i)(官网|官網|套餐|流量|机场|機場|订阅|訂閱|剩余|剩餘|到期|过期|過期|有效期|expire|traffic|reset|quota)`;
+
+
+// ======================================================
+// ↓↓↓ 以下为引擎，一般无需修改 ↓↓↓
+// ======================================================
+
+
+// =========================
+// Names
+// =========================
+
+const GROUP = Object.freeze({
+    GFW: "🎏 GFW Mode",
+    PROXY: "🚀 PROXY",
+    AI: "🤖 AI",
+    GOOGLE: "✨ Google",
+    GITHUB: "⚛️ GitHub",
+    SCHOLAR: "📚 Scholar",
+    YOUTUBE: "🍷 Youtube",
+    TELEGRAM: "📲 Telegram",
+    APPLE: "🍎 Apple",
+    MICROSOFT: "Ⓜ️ Microsoft",
+    STEAM: "🎮 Steam",
+    BILIBILI: "📺 BiliBili",
+    TENCENT: "🐧 Tencent",
+    VPS: "Vps-service",
+    AUTO: "♻️ Auto",
+    BALANCE: "⚖️ Balance",
+    FAILOVER: "🛠️ Failover",
+    DIRECT: "🎯 DIRECT",
+    ADS: "🚫 AD",
+});
+
+const REGION = Object.freeze({
+    HK: "HK 香港",
+    TW: "TW 台湾",
+    US: "US 美国",
+    JP: "JP 日本",
+    SG: "SG 狮城",
+    KR: "KR 韩国",
+    GB: "GB 英国",
+});
+
+// Region pattern — 单一来源，(?i)/RegExp 双端派生
+const REGION_PATTERN = Object.freeze({
+    [REGION.HK]: String.raw`(香港|🇭🇰|(^|[^A-Za-z])HK([^A-Za-z]|$)|HKG|Hong\s?Kong)`,
+    [REGION.TW]: String.raw`(台湾|臺灣|🇹🇼|(^|[^A-Za-z])TW([^A-Za-z]|$)|TWN|Taiwan)`,
+    [REGION.US]: String.raw`(美国|美國|🇺🇸|(^|[^A-Za-z])US([^A-Za-z]|$)|USA|United\s?States|America)`,
+    [REGION.JP]: String.raw`(日本|🇯🇵|(^|[^A-Za-z])JP([^A-Za-z]|$)|JPN|Japan)`,
+    [REGION.SG]: String.raw`(新加坡|狮城|獅城|🇸🇬|(^|[^A-Za-z])SG([^A-Za-z]|$)|SGP|Singapore)`,
+    [REGION.KR]: String.raw`(韩国|韓國|🇰🇷|(^|[^A-Za-z])KR([^A-Za-z]|$)|KOR|Korea)`,
+    [REGION.GB]: String.raw`(英国|英國|🇬🇧|(^|[^A-Za-z])GB([^A-Za-z]|$)|GBR|United\s?Kingdom|England)`,
+});
+
+const REGION_FILTER = Object.freeze(
+    Object.fromEntries(
+        Object.entries(REGION_PATTERN).map(([r, p]) => [r, `(?i)${p}`])
+    )
+);
+
+const REGION_DETECT = Object.freeze(
+    Object.fromEntries(
+        Object.entries(REGION_PATTERN).map(([r, p]) => [r, new RegExp(p, "i")])
+    )
+);
+
+const COMMON_REGIONS = [REGION.HK, REGION.TW, REGION.US, REGION.JP, REGION.SG];
+
+const FAILOVER_ORDER = [REGION.HK, REGION.JP, REGION.SG, REGION.US, REGION.TW, REGION.KR, REGION.GB];
+
+
+// =========================
+// App policies
+// =========================
+
+const MODE = Object.freeze({
+    REGION: "region",
+    NO_DIRECT: "no-direct",
+    WITH_DIRECT: "with-direct",
+    DIRECT_FIRST: "direct-first",
+    DIRECT_PROXY: "direct-proxy",
+});
+
+const APP_POLICY = Object.freeze({
+    [GROUP.AI]: { mode: MODE.REGION, regions: [REGION.US], emergencyProxy: true },
+    [GROUP.GOOGLE]: { mode: MODE.REGION, regions: [REGION.US], emergencyProxy: true },
+    [GROUP.GITHUB]: { mode: MODE.NO_DIRECT },
+    [GROUP.SCHOLAR]: { mode: MODE.WITH_DIRECT },
+    [GROUP.YOUTUBE]: { mode: MODE.NO_DIRECT },
+    [GROUP.TELEGRAM]: { mode: MODE.NO_DIRECT },
+    [GROUP.APPLE]: { mode: MODE.WITH_DIRECT },
+    [GROUP.MICROSOFT]: { mode: MODE.WITH_DIRECT },
+    [GROUP.STEAM]: { mode: MODE.WITH_DIRECT },
+    [GROUP.BILIBILI]: { mode: MODE.DIRECT_FIRST },
+    [GROUP.TENCENT]: { mode: MODE.DIRECT_PROXY },
+});
+
+
+// =========================
+// Rule-set registry
+// =========================
+
+const SERVICES = Object.freeze([
+    ["AI", GROUP.AI, "category-ai-!cn"],
+    ["Google", GROUP.GOOGLE, "google"],
+    ["GitHub", GROUP.GITHUB, "github"],
+    ["Scholar", GROUP.SCHOLAR, "category-scholar-!cn"],
+    ["Youtube", GROUP.YOUTUBE, "youtube"],
+    ["Telegram", GROUP.TELEGRAM, "telegram"],
+    ["Apple", GROUP.APPLE, "apple"],
+    ["Microsoft", GROUP.MICROSOFT, "microsoft"],
+    ["Steam", GROUP.STEAM, "steam"],
+    ["BiliBili", GROUP.BILIBILI, "bilibili"],
+    ["Tencent", GROUP.TENCENT, "tencent"],
+]);
+
+const ROUTE_ORDER = Object.freeze([
+    "AI",
+    "Scholar", "Youtube",
+    "GitHub",
+    "Telegram", "Steam", "BiliBili", "Tencent", "Apple",
+    "Google", "Microsoft",
+]);
+
+const SERVICE_BY_PROVIDER = Object.freeze(
+    Object.fromEntries(
+        SERVICES.map(([provider, group, geosite]) => [
+            provider, { provider, group, geosite },
+        ])
+    )
+);
+
+// High-priority exceptions — provider 自动创建 + 在所有 APP 规则前匹配
+const RULE_EXCEPTIONS = Object.freeze([
+    // Steam 国内 CDN（不含 steamcontent.com / steamstatic.com）
+    {
+        provider: "SteamCN",
+        kind: "geosite",
+        source: "steam@cn",
+        behavior: "domain",
+        target: GROUP.DIRECT,
+        path: "steam-cn",
+    },
+    // 国内游戏平台 CDN 全集（steam@cn 的父集）
+    {
+        provider: "GameCN",
+        kind: "geosite",
+        source: "category-games@cn",
+        behavior: "domain",
+        target: GROUP.DIRECT,
+        path: "games-cn",
+    },
+]);
+
+
+// ======================================================
+// Helpers
+// ======================================================
+
+const uniq = a => [...new Set(a.filter(Boolean))];
+const asArray = v => (Array.isArray(v) ? v : []);
+
+function escapeRegex(s) {
+    return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// 🧩 区域匹配正则
-const REGION_PATTERNS = {
-    "HK 香港": /(香港|🇭🇰|HK(?![A-Z])|HKG|Hong\s?Kong)/i,
-    "TW 台湾": /(台湾|🇹🇼|TW(?![A-Z])|TWN|Taiwan)/i,
-    "JP 日本": /(日本|🇯🇵|JP(?![A-Z])|JPN|Japan)/i,
-    "US 美国": /(美国|🇺🇸|US(?![A-Z])|USA|United\s?States|American)/i,
-    "SG 狮城": /(新加坡|狮城|🇸🇬|SG(?![A-Z])|SGP|Singapore)/i,
-    "KR 韩国": /(韩国|🇰🇷|KR(?![A-Z])|KOR|Korea)/i,
-    "GB 英国": /(英国|🇬🇧|GB(?![A-Z])|GBR|United\s?Kingdom|England)/i
-};
+function exactRegex(names) {
+    const x = names.filter(Boolean).map(escapeRegex);
+    return x.length ? `^(?:${x.join("|")})$` : String.raw`a^`;
+}
 
-// ⚙️ 通用 ruleProvider 配置模板
-const RULE_PROVIDER_COMMON = {
-    type: "http",
-    format: "text",
-    interval: 86400
-};
+function combineRegionFilters(regions) {
+    const patterns = regions.map(r => REGION_PATTERN[r]).filter(Boolean);
+    if (!patterns.length) return null;
+    if (patterns.length === 1) return `(?i)${patterns[0]}`;
+    return `(?i)(?:${patterns.map(p => `(?:${p})`).join("|")})`;
+}
 
-// 🧷 自定义规则集入口（供多订阅统一维护）
-const CUSTOM_RULE_PROVIDERS = {
-    // "my-ip-pool": {
-    //     type: "http",
-    //     behavior: "ipcidr",
-    //     url: "https://example.com/ip-pool.txt",
-    //     interval: 86400,
-    //     format: "text",
-    //     path: "./ruleset/my-ip-pool.txt"
-    // }
-};
+function dynamic(filter = null, emptyFallback = "REJECT") {
+    const x = {
+        "include-all": true,
+        "exclude-type": "Direct",
+        "exclude-filter": NODE_EXCLUDE,
+        "empty-fallback": emptyFallback,
+    };
+    if (filter) x.filter = filter;
+    return x;
+}
 
 
-// 📜 定义远程规则集（按优先顺序选取CDN）
-const RULE_PROVIDERS = {
-    // Loyalsoldier 基础规则集
-    proxy: { type: "http", behavior: "domain", interval: 86400, url: cdn("Loyalsoldier/clash-rules@release/proxy.txt"), path: "./ruleset/proxy.txt" },
-    direct: { type: "http", behavior: "domain", interval: 86400, url: cdn("Loyalsoldier/clash-rules@release/direct.txt"), path: "./ruleset/direct.txt" },
-    private: { type: "http", behavior: "domain", interval: 86400, url: cdn("Loyalsoldier/clash-rules@release/private.txt"), path: "./ruleset/private.txt" },
-    gfw: { type: "http", behavior: "domain", interval: 86400, url: cdn("Loyalsoldier/clash-rules@release/gfw.txt"), path: "./ruleset/gfw.txt" },
-    greatfire: { type: "http", behavior: "domain", interval: 86400, url: cdn("Loyalsoldier/clash-rules@release/greatfire.txt"), path: "./ruleset/greatfire.txt" },
-    "tld-not-cn": { type: "http", behavior: "domain", interval: 86400, url: cdn("Loyalsoldier/clash-rules@release/tld-not-cn.txt"), path: "./ruleset/tld-not-cn.txt" },
-    cncidr: { type: "http", behavior: "ipcidr", interval: 86400, url: cdn("Loyalsoldier/clash-rules@release/cncidr.txt"), path: "./ruleset/cncidr.txt" },
-    telegramcidr: { type: "http", behavior: "ipcidr", interval: 86400, url: cdn("Loyalsoldier/clash-rules@release/telegramcidr.txt"), path: "./ruleset/telegramcidr.txt" },
-    lancidr: { type: "http", behavior: "ipcidr", interval: 86400, url: cdn("Loyalsoldier/clash-rules@release/lancidr.txt"), path: "./ruleset/lancidr.txt" },
-    applications: { type: "http", behavior: "classical", interval: 86400, url: cdn("Loyalsoldier/clash-rules@release/applications.txt"), path: "./ruleset/applications.txt" },
+// ======================================================
+// Detect actually available regions
+// ======================================================
 
-    // MetaCubeX 分类规则集
-    Microsoft: { type: "http", behavior: "domain", format: "yaml", interval: 86400, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/microsoft.yaml", path: "./ruleset/microsoft.yaml" },
-    Google: { type: "http", behavior: "domain", format: "yaml", interval: 86400, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/google.yaml", path: "./ruleset/google.yaml" },
-    Apple: { type: "http", behavior: "domain", format: "yaml", interval: 86400, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/apple.yaml", path: "./ruleset/apple.yaml" },
-    OpenAI: { type: "http", behavior: "domain", format: "yaml", interval: 86400, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/openai.yaml", path: "./ruleset/openai.yaml" },
-    Youtube: { type: "http", behavior: "domain", format: "yaml", interval: 86400, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/youtube.yaml", path: "./ruleset/youtube.yaml" },
-    BiliBili: { type: "http", behavior: "domain", format: "yaml", interval: 86400, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/bilibili.yaml", path: "./ruleset/bilibili.yaml" },
-    GitHub: { type: "http", behavior: "domain", format: "yaml", interval: 86400, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/github.yaml", path: "./ruleset/github.yaml" },
-    Steam: { type: "http", behavior: "domain", format: "yaml", interval: 86400, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/steam.yaml", path: "./ruleset/steam.yaml" },
+function collectProxyNames(config) {
+    const names = new Set();
+    const oldGroups = asArray(config["proxy-groups"]);
+    const oldGroupNames = new Set(oldGroups.map(g => g?.name).filter(Boolean));
 
-    // 学术资源规则集
-    Scholar: { type: "http", behavior: "domain", format: "yaml", interval: 86400, url: "https://raw.githubusercontent.com/Diekunstderfug/Diekunstderfug/refs/heads/main/scholar.yaml", path: "./ruleset/scholar.yaml" }
-};
-
-// 🧠 默认 prependRules（优先顺序）
-const DEFAULT_RULES = [
-    "RULE-SET,Scholar,📚 Scholar",
-    "RULE-SET,OpenAI,🤖 OpenAI",
-    "RULE-SET,applications,🎯 DIRECT",
-    "RULE-SET,private,🎯 DIRECT",
-    "RULE-SET,GitHub,⚛️ GitHub",
-    "RULE-SET,Apple,🍎 Apple",
-    "RULE-SET,Microsoft,Ⓜ️ Microsoft",
-    "RULE-SET,Google,✨ Google",
-    "RULE-SET,Youtube,🍷 Youtube",
-    "RULE-SET,BiliBili,📺 BiliBili",
-    "RULE-SET,Steam,🎮 Steam",
-    "RULE-SET,proxy,🚀 PROXY",
-    "RULE-SET,gfw,🚀 PROXY",
-    "RULE-SET,greatfire,🚀 PROXY",
-    "RULE-SET,tld-not-cn,🚀 PROXY",
-    "RULE-SET,direct,🎯 DIRECT",
-    "RULE-SET,lancidr,🎯 DIRECT,no-resolve",
-    "RULE-SET,cncidr,🎯 DIRECT,no-resolve",
-    "RULE-SET,telegramcidr,📲 Telegram,no-resolve",
-    "GEOIP,LAN,🎯 DIRECT,no-resolve",
-    "GEOIP,CN,🎯 DIRECT,no-resolve",
-    "MATCH,🛠️ Failover"
-];
-
-// 🧩 DNS增量配置模板（插入型合并）
-const DNS_PATCH = {
-    "default-nameserver": ["114.114.114.114", "223.5.5.5", "119.29.29.29", "1.1.1.1", "8.8.8.8"],
-    "nameserver": ["https://dns.114dns.com/dns-query"],
-    "fake-ip-filter": ["routerlogin.net", "+.msftconnecttest.com", "+.msftncsi.com"]
-};
-
-// ------------------------------------------------------
-// 主函数逻辑
-// ------------------------------------------------------
-function main(config) {
-    // 1️⃣ 收集代理节点
-    const allProxies = new Set();
-    if (Array.isArray(config.proxies))
-        for (const p of config.proxies) if (p?.name) allProxies.add(p.name);
-    if (Array.isArray(config["proxy-groups"]))
-        for (const g of config["proxy-groups"]) if (Array.isArray(g.proxies))
-            for (const n of g.proxies) if (typeof n === "string") allProxies.add(n);
-    if (config["proxy-providers"])
-        for (const prov of Object.values(config["proxy-providers"]))
-            if (prov?.proxies) for (const p of prov.proxies) if (p?.name) allProxies.add(p.name);
-    if (allProxies.size === 0) throw new Error("配置文件中未找到任何代理节点");
-
-    // 2️⃣ 自动生成地区组
-    const regionGroups = [];
-    for (const [name, regex] of Object.entries(REGION_PATTERNS)) {
-        const matched = [...allProxies].filter(x => regex.test(x));
-        regionGroups.push({
-            name,
-            type: "url-test",
-            url: "http://www.gstatic.com/generate_204",
-            interval: 300,
-            tolerance: 30,
-            proxies: matched.length ? matched : ["DIRECT"]
-        });
+    for (const p of config.proxies || []) {
+        if (p?.name) names.add(p.name);
     }
 
-    // 3️⃣ 主策略组
-    const filtered = [...allProxies].filter(n => !/(官网|套餐|流量|机场|订阅)/.test(n));
-    const common = ["🎯 DIRECT", "🚀 PROXY", "♻️ Auto", "⚖️ Balance", "🛠️ Failover", "HK 香港", "TW 台湾", "US 美国", "JP 日本", "SG 狮城"];
-    const customGroups = [
-        { name: "🎏 Proxy mode", type: "select", proxies: ["💊 GFWlist", "🩹 Whitelist"] },
-        { name: "🚀 PROXY", type: "select", proxies: ["♻️ Auto", "⚖️ Balance", "🛠️ Failover", ...filtered] },
-        { name: "🤖 OpenAI", type: "select", proxies: common },
-        { name: "📚 Scholar", type: "select", proxies: common },
-        { name: "✨ Google", type: "select", proxies: common },
-        { name: "🍷 Youtube", type: "select", proxies: common },
-        { name: "⚛️ GitHub", type: "select", proxies: common },
-        { name: "📲 Telegram", type: "select", proxies: common },
-        { name: "📺 BiliBili", type: "select", proxies: ["🎯 DIRECT", ...common.slice(1)] },
-        { name: "🎮 Steam", type: "select", proxies: common },
-        { name: "🍎 Apple", type: "select", proxies: common },
-        { name: "Ⓜ️ Microsoft", type: "select", proxies: common },
-        { name: "💊 GFWlist", type: "url-test", url: "http://www.gstatic.com/generate_204", interval: 86400, proxies: ["🎯 DIRECT"] },
-        { name: "🩹 Whitelist", type: "url-test", url: "http://www.gstatic.com/generate_204", interval: 86400, proxies: ["🚀 PROXY"] },
-        { name: "🎯 DIRECT", type: "url-test", url: "http://www.gstatic.com/generate_204", interval: 86400, proxies: ["DIRECT"] },
-        { name: "♻️ Auto", type: "url-test", url: "http://www.gstatic.com/generate_204", interval: 300, tolerance: 30, proxies: filtered },
-        { name: "⚖️ Balance", type: "load-balance", url: "http://www.gstatic.com/generate_204", interval: 300, tolerance: 30, proxies: filtered },
-        { name: "🛠️ Failover", type: "fallback", url: "http://www.gstatic.com/generate_204", interval: 300, tolerance: 30, proxies: filtered }
-    ];
-    const oldGroups = Array.isArray(config["proxy-groups"]) ? config["proxy-groups"] : [];
-    config["proxy-groups"] = [...customGroups, ...regionGroups, ...oldGroups];
-
-    // 4️⃣ 规则集与规则
-    const activeRuleProviders = { ...RULE_PROVIDERS, ...CUSTOM_RULE_PROVIDERS };
-    for (const v of Object.values(activeRuleProviders)) v.version = Date.now().toString();
-    config["rule-providers"] = activeRuleProviders;
-    config["rules"] = [...CUSTOM_RULES, ...DEFAULT_RULES, ...(config["rules"] || [])];
-
-    // 5️⃣ DNS增量合并
-    config.dns = config.dns || {};
-    for (const [key, arr] of Object.entries(DNS_PATCH)) {
-        if (Array.isArray(arr)) {
-            config.dns[key] = Array.from(new Set([...(config.dns[key] || []), ...arr]));
+    for (const g of oldGroups) {
+        for (const n of g?.proxies || []) {
+            if (
+                typeof n === "string" &&
+                !oldGroupNames.has(n) &&
+                n !== "DIRECT" && n !== "REJECT" && n !== "REJECT-DROP"
+            ) {
+                names.add(n);
+            }
         }
     }
+
+    for (const p of Object.values(config["proxy-providers"] || {})) {
+        for (const list of [p?.proxies, p?.payload]) {
+            if (!Array.isArray(list)) continue;
+            for (const n of list) {
+                if (typeof n === "string") names.add(n);
+                else if (n?.name) names.add(n.name);
+            }
+        }
+    }
+    return names;
+}
+
+function providersAreOpaque(config) {
+    return Object.values(config["proxy-providers"] || {})
+        .some(p => !Array.isArray(p?.proxies) && !Array.isArray(p?.payload));
+}
+
+function detectRegions(config) {
+    if (providersAreOpaque(config)) {
+        return new Set(Object.values(REGION));
+    }
+    const names = [...collectProxyNames(config)];
+    return new Set(
+        Object.entries(REGION_DETECT)
+            .filter(([, re]) => names.some(name => re.test(name)))
+            .map(([region]) => region)
+    );
+}
+
+
+// ======================================================
+// Group builders
+// ======================================================
+
+function commonNoDirect(available) {
+    return [
+        GROUP.PROXY,
+        GROUP.AUTO,
+        GROUP.FAILOVER,
+        ...COMMON_REGIONS.filter(r => available.has(r)),
+    ];
+}
+
+function commonWithDirect(available) {
+    return [...commonNoDirect(available), GROUP.DIRECT];
+}
+
+function buildApp(name, available) {
+    const p = APP_POLICY[name];
+    if (!p) throw new Error(`Missing APP_POLICY: ${name}`);
+
+    // REGION — AI/Google：US url-test + US nodes + PROXY emergency
+    if (p.mode === MODE.REGION) {
+        const regions = uniq(p.regions || []).filter(r => available.has(r));
+
+        if (!regions.length) {
+            const fallback = p.emergencyProxy ? GROUP.PROXY : "REJECT";
+            return {
+                name, type: "select",
+                proxies: [fallback],
+                "default-selected": fallback,
+            };
+        }
+
+        const proxies = [...regions];
+        if (p.emergencyProxy) proxies.push(GROUP.PROXY);
+
+        return {
+            name, type: "select", proxies,
+            ...dynamic(combineRegionFilters(regions)),
+            "default-selected": regions[0],
+        };
+    }
+
+    if (p.mode === MODE.NO_DIRECT) {
+        return {
+            name, type: "select",
+            proxies: commonNoDirect(available),
+            "default-selected": GROUP.PROXY,
+        };
+    }
+
+    if (p.mode === MODE.WITH_DIRECT) {
+        return {
+            name, type: "select",
+            proxies: commonWithDirect(available),
+            "default-selected": GROUP.PROXY,
+        };
+    }
+
+    if (p.mode === MODE.DIRECT_FIRST) {
+        return {
+            name, type: "select",
+            proxies: [GROUP.DIRECT, ...commonNoDirect(available)],
+            "default-selected": GROUP.DIRECT,
+        };
+    }
+
+    if (p.mode === MODE.DIRECT_PROXY) {
+        return {
+            name, type: "select",
+            proxies: [GROUP.DIRECT, GROUP.PROXY],
+            "default-selected": GROUP.DIRECT,
+        };
+    }
+
+    throw new Error(`Unknown APP_MODE: ${name}`);
+}
+
+function buildRegions(available) {
+    return Object.entries(REGION_FILTER)
+        .filter(([name]) => available.has(name))
+        .map(([name, filter]) => ({
+            name,
+            type: "url-test",
+            url: TEST_URL,
+            interval: TEST_INTERVAL,
+            timeout: 5000,
+            lazy: true,
+            tolerance: 30,
+            "expected-status": 204,
+            ...dynamic(filter),
+        }));
+}
+
+function buildGroups(available) {
+    const failRegions = FAILOVER_ORDER.filter(r => available.has(r));
+
+    return [
+        // Global
+        {
+            name: GROUP.GFW, type: "select",
+            proxies: [GROUP.PROXY, GROUP.DIRECT],
+            "default-selected": GROUP.PROXY,
+        },
+        {
+            name: GROUP.PROXY, type: "select",
+            proxies: [GROUP.AUTO, GROUP.FAILOVER, GROUP.BALANCE],
+            ...dynamic(),
+            "default-selected": GROUP.AUTO,
+        },
+
+        // Primary apps
+        buildApp(GROUP.AI, available),
+        buildApp(GROUP.GOOGLE, available),
+        buildApp(GROUP.GITHUB, available),
+        buildApp(GROUP.SCHOLAR, available),
+        buildApp(GROUP.YOUTUBE, available),
+        buildApp(GROUP.TELEGRAM, available),
+
+        // General apps
+        buildApp(GROUP.APPLE, available),
+        buildApp(GROUP.MICROSOFT, available),
+        buildApp(GROUP.STEAM, available),
+        buildApp(GROUP.BILIBILI, available),
+        buildApp(GROUP.TENCENT, available),
+
+        // VPS
+        {
+            name: GROUP.VPS, type: "select",
+            proxies: [GROUP.DIRECT],
+            ...dynamic(exactRegex(VPS_NODE_NAME), "DIRECT"),
+            "default-selected": VPS_NODE_NAME[0] || GROUP.DIRECT,
+        },
+
+        // Advanced engines
+        {
+            name: GROUP.AUTO, type: "url-test",
+            url: TEST_URL, interval: TEST_INTERVAL,
+            timeout: 5000, lazy: true, tolerance: 30,
+            "expected-status": 204,
+            ...dynamic(),
+        },
+        {
+            name: GROUP.BALANCE, type: "load-balance",
+            strategy: "consistent-hashing",
+            url: TEST_URL, interval: TEST_INTERVAL,
+            timeout: 5000, lazy: true,
+            "expected-status": 204,
+            ...dynamic(),
+        },
+        {
+            name: GROUP.FAILOVER, type: "fallback",
+            proxies: [...failRegions, GROUP.AUTO],
+            url: TEST_URL, interval: TEST_INTERVAL,
+            timeout: 5000, lazy: true,
+            "expected-status": 204,
+        },
+
+        // Region groups
+        ...buildRegions(available),
+
+        // Utilities
+        {
+            name: GROUP.DIRECT, type: "select",
+            proxies: ["DIRECT"],
+        },
+        {
+            name: GROUP.ADS, type: "select",
+            proxies: ["REJECT", "REJECT-DROP", GROUP.DIRECT],
+            "default-selected": "REJECT",
+        },
+    ];
+}
+
+
+// ======================================================
+// Rule providers
+// ======================================================
+
+function viaProxy(x) {
+    return RULE_DOWNLOAD_PROXY ? { ...x, proxy: RULE_DOWNLOAD_PROXY } : x;
+}
+
+function mrs(kind, source, behavior, path = source) {
+    return viaProxy({
+        type: "http",
+        behavior,
+        format: "mrs",
+        interval: 86400,
+        url: `${META}/${kind}/${source}.mrs`,
+        path: `./ruleset/${path}.mrs`,
+    });
+}
+
+function buildProviders() {
+    const x = {
+        applications: viaProxy({
+            type: "http",
+            behavior: "classical",
+            format: "text",
+            interval: 86400,
+            url: APPLICATIONS,
+            path: "./ruleset/applications.txt",
+        }),
+        private: mrs("geosite", "private", "domain", "private-domain"),
+        "geoip-private": mrs("geoip", "private", "ipcidr", "private-ip"),
+        "geosite-cn": mrs("geosite", "cn", "domain", "cn-domain"),
+        "geoip-cn": mrs("geoip", "cn", "ipcidr", "cn-ip"),
+        geolocationNotCN: mrs("geosite", "geolocation-!cn", "domain", "geolocation-not-cn"),
+        telegramcidr: mrs("geoip", "telegram", "ipcidr", "telegram-ip"),
+        ads: mrs("geosite", "category-ads-all", "domain", "ads"),
+    };
+
+    for (const [provider, , geosite] of SERVICES) {
+        x[provider] = mrs("geosite", geosite, "domain", `service-${provider.toLowerCase()}`);
+    }
+
+    for (const exception of RULE_EXCEPTIONS) {
+        x[exception.provider] = mrs(
+            exception.kind,
+            exception.source,
+            exception.behavior,
+            exception.path || exception.provider.toLowerCase()
+        );
+    }
+
+    return { ...x, ...CUSTOM_RULE_PROVIDERS };
+}
+
+
+// ======================================================
+// Routing
+// ======================================================
+
+function buildRules() {
+    const serviceRules = ROUTE_ORDER.map(provider => {
+        const service = SERVICE_BY_PROVIDER[provider];
+        if (!service) throw new Error(`Unknown ROUTE_ORDER provider: ${provider}`);
+        return `RULE-SET,${service.provider},${service.group}`;
+    });
+
+    return [
+        // Layer 0 — overrides
+        ...VPS_RULES,
+        ...CUSTOM_RULES,
+
+        // Layer 1 — local / private
+        `RULE-SET,applications,${GROUP.DIRECT}`,
+        `RULE-SET,private,${GROUP.DIRECT}`,
+        `RULE-SET,geoip-private,${GROUP.DIRECT},no-resolve`,
+
+        // Layer 2 — ads
+        `RULE-SET,ads,${GROUP.ADS}`,
+
+        // Layer 3 — service exceptions (SteamCN MUST precede Steam)
+        ...RULE_EXCEPTIONS.map(e => `RULE-SET,${e.provider},${e.target}`),
+
+        // Layer 4 — explicit services
+        ...serviceRules,
+
+        // Layer 5 — telegram direct-IP
+        `RULE-SET,telegramcidr,${GROUP.TELEGRAM},no-resolve`,
+
+        // Layer 6 — generic overseas
+        `RULE-SET,geolocationNotCN,${GROUP.GFW}`,
+
+        // Layer 7 — mainland China
+        `RULE-SET,geosite-cn,${GROUP.DIRECT}`,
+        `RULE-SET,geoip-cn,${GROUP.DIRECT},no-resolve`,
+
+        // Layer 8 — unknown
+        `MATCH,${GROUP.GFW}`,
+    ];
+}
+
+
+// ======================================================
+// DNS
+// ======================================================
+
+function patchDns(config) {
+    const old = config.dns || {};
+    const policy = (old["nameserver-policy"] && typeof old["nameserver-policy"] === "object")
+        ? old["nameserver-policy"]
+        : {};
+
+    config.dns = {
+        ...old,
+        "default-nameserver": [...DNS_BOOTSTRAP],
+        nameserver: [...DNS_DOH],
+        "proxy-server-nameserver": [...DNS_DOH],
+        "direct-nameserver": [...DNS_DOH],
+        "direct-nameserver-follow-policy": true,
+        "nameserver-policy": {
+            ...policy,
+            "geosite:cn": [...DNS_DOH],
+            "+.lan": "system",
+            "+.local": "system",
+            "+.home.arpa": "system",
+        },
+        "fake-ip-filter": uniq([
+            ...asArray(old["fake-ip-filter"]),
+            "routerlogin.net",
+            "+.msftconnecttest.com",
+            "+.msftncsi.com",
+            "+.lan", "+.local", "+.home.arpa",
+            "time.windows.com",
+            "time.apple.com",
+            "pool.ntp.org",
+        ]),
+    };
+}
+
+
+// ======================================================
+// Main
+// ======================================================
+
+function main(config) {
+    const hasStatic = Array.isArray(config.proxies) && config.proxies.length > 0;
+    const hasProviders = config["proxy-providers"] &&
+        Object.keys(config["proxy-providers"]).length > 0;
+
+    if (!hasStatic && !hasProviders) {
+        throw new Error("配置中未找到 proxies 或 proxy-providers");
+    }
+
+    const availableRegions = detectRegions(config);
+    const groups = buildGroups(availableRegions);
+
+    const managed = new Set([
+        ...Object.values(GROUP),
+        ...Object.values(REGION),
+        "🎏 Proxy mode",
+        "💊 GFWlist",
+        "🩹 Whitelist",
+    ]);
+
+    const preserved = asArray(config["proxy-groups"])
+        .filter(g => g?.name && !managed.has(g.name));
+
+    config["proxy-groups"] = [...groups, ...preserved];
+
+    config["rule-providers"] = {
+        ...(config["rule-providers"] || {}),
+        ...buildProviders(),
+    };
+
+    config.rules = buildRules();
+    patchDns(config);
 
     return config;
 }
 
-// 🔌 暴露自定义入口，方便脚本外部接入调整
+
+// ======================================================
+// Clash Verge Rev extension interface
+// ======================================================
+
 main.customRuleInterface = {
     providers: CUSTOM_RULE_PROVIDERS,
-    rules: CUSTOM_RULES
+    rules: CUSTOM_RULES,
 };
