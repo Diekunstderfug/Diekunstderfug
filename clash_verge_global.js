@@ -10,7 +10,7 @@
 // ======================================================
 
 // ----- VPS 节点名（精确匹配）-----
-const VPS_NODE_NAME = ["US-la-vps-lisa"];
+const VPS_NODE_NAME = [];
 
 // ----- VPS 专用规则（会插到所有规则最前）-----
 const VPS_RULES = [];
